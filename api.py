@@ -1,23 +1,26 @@
 
 from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from storage import load_applications, save_applications
+from pydantic import BaseModel, Field
+from typing import Literal
+from sqlalchemy import select
+
+from database import SessionLocal
+from models import ApplicationDB
 
 app = FastAPI()
 
 
 class Application(BaseModel):
-    company: str
-    role: str
-    status: str
-    location: str
+    company: str = Field(min_length=1, max_length=100)
+    role: str = Field(min_length=1, max_length=100)
+    status: Literal["Applied", "Interview", "Offer", "Rejected"]
+    location: str = Field(min_length=1, max_length=100)
 
 class ApplicationUpdate(BaseModel):
-    company: str | None = None
-    role: str | None = None
-    status: str | None = None
-    location: str | None = None
-
+    company: str = Field(default=None, min_length=1, max_length=100)
+    role: str = Field(default=None, min_length=1, max_length=100)
+    status: Literal["Applied", "Interview", "Offer", "Rejected"] = None
+    location: str = Field(default=None, min_length=1, max_length=100)
 
 @app.get("/")
 def home():
@@ -26,72 +29,92 @@ def home():
 
 @app.get("/applications")
 def get_applications():
-    return load_applications()
+    with SessionLocal() as db:
+        statement = select(ApplicationDB)
+
+        applications = db.scalars(statement).all()
+
+        return [
+            {
+                "id": application.id,
+                "company": application.company,
+                "role": application.role,
+                "status": application.status,
+                "location": application.location
+            }
+            for application in applications
+        ]
 
 
 @app.post("/applications", status_code=201)
 def create_application(application: Application):
-    applications = load_applications()
+    with SessionLocal() as db:
 
-    # Get the highest existing ID and add 1
-    new_id = max(
-        (app["id"] for app in applications),
-        default=0
-    ) + 1
+        new_application = ApplicationDB(
+            **application.model_dump()
+        )
 
-    # Convert the Pydantic model into a dictionary
-    new_application = application.model_dump()
+        db.add(new_application)
+        db.commit()
+        db.refresh(new_application)
 
-    # Add the unique ID
-    new_application["id"] = new_id
-
-    # Add the application to the list
-    applications.append(new_application)
-
-    # Save the updated list to JSON
-    save_applications(applications)
-
-    return {
-        "message": "Application added successfully!",
-        "application": new_application
-    }
+        return {
+            "message": "Application added successfully!",
+            "application": {
+                "id": new_application.id,
+                "company": new_application.company,
+                "role": new_application.role,
+                "status": new_application.status,
+                "location": new_application.location
+            }
+        }
 
 @app.patch("/applications/{application_id}")
-def update_application(
-    application_id: int,
-    update: ApplicationUpdate
-):
-    applications = load_applications()
+def update_application(application_id: int, update: ApplicationUpdate):
+    with SessionLocal() as db:
 
-    for application in applications:
-        if application["id"] == application_id:
+        application = db.get(ApplicationDB, application_id)
 
-            changes = update.model_dump(exclude_unset=True)
+        if application is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Application not found"
+            )
 
-            application.update(changes)
+        changes = update.model_dump(exclude_unset=True)
 
-            save_applications(applications)
+        for field, value in changes.items():
+            setattr(application, field, value)
 
-            return {
-                "message": "Application updated successfully!",
-                "application": application
+        db.commit()
+        db.refresh(application)
+
+        return {
+            "message": "Application updated successfully!",
+            "application": {
+                "id": application.id,
+                "company": application.company,
+                "role": application.role,
+                "status": application.status,
+                "location": application.location
             }
-
-    return {"message": "Application not found"}
+        }
 
 @app.delete("/applications/{application_id}")
 def delete_application(application_id: int):
-    applications = load_applications()
+    with SessionLocal() as db:
 
-    for application in applications:
-        if application["id"] == application_id:
-            applications.remove(application)
+        application = db.get(ApplicationDB, application_id)
 
-            save_applications(applications)
+        if application is None:
+            raise HTTPException(
+                status_code=404,
+                detail="Application not found"
+            )
 
-            return {"message": "Application deleted successfully!"}
+        db.delete(application)
+        db.commit()
 
-    raise HTTPException(
-    status_code=404,
-    detail="Application not found"
-)
+        return {
+            "message": "Application deleted successfully!"
+        }
