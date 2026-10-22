@@ -1,11 +1,21 @@
+# Python
 __pycache__/
 *.pyc
-
-applications.json
-
-.env
+.pytest_cache/
 .venv/
 venv/
 
+# Local application data
+applications.json
+
+# Environment variables and credentials
+.env
+.env.*
+!.env.example
+
+# React / Node.js
 node_modules/
 dist/
+
+# Operating system
+.DS_Store
